@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book an appointment</title>
+<style>
+  :root {
+    --accent: #7a3b69;
+    --bg: #faf7f9;
+    --card: #ffffff;
+    --text: #2a2230;
+    --muted: #7a7180;
+    --border: #e7dfe6;
+    --danger: #b3261e;
+    --ok: #2e7d32;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  header {
+    padding: 20px 16px 12px; text-align: center;
+  }
+  header img { max-height: 56px; margin-bottom: 8px; }
+  header h1 { font-size: 1.25rem; margin: 0; }
+  header p { color: var(--muted); margin: 4px 0 0; font-size: 0.9rem; }
+  main { max-width: 480px; margin: 0 auto; padding: 0 16px 40px; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px; margin-bottom: 16px;
+  }
+  .steps { display: flex; gap: 6px; justify-content: center; margin: 8px 0 20px; }
+  .steps .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--border); }
+  .steps .dot.active { background: var(--accent); }
+  .steps .dot.done { background: var(--accent); opacity: 0.5; }
+  h2 { font-size: 1.05rem; margin: 0 0 14px; }
+  .option-list { display: flex; flex-direction: column; gap: 8px; }
+  .option {
+    display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--card); cursor: pointer; text-align: left; font-size: 0.95rem;
+    width: 100%;
+  }
+  .option:active { transform: scale(0.99); }
+  .option.selected { border-color: var(--accent); background: #f8f1f6; }
+  .option .name { font-weight: 600; }
+  .option .meta { color: var(--muted); font-size: 0.82rem; }
+  .option .price { font-weight: 600; color: var(--accent); white-space: nowrap; }
+  .slot-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .slot {
+    padding: 10px 4px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); text-align: center; font-size: 0.88rem; cursor: pointer;
+  }
+  .slot.selected { border-color: var(--accent); background: var(--accent); color: #fff; }
+  input[type=text], input[type=tel], input[type=date] {
+    width: 100%; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px;
+    font-size: 1rem; margin-bottom: 10px; background: #fff; color: var(--text);
+  }
+  label { font-size: 0.82rem; color: var(--muted); display: block; margin-bottom: 4px; }
+  button.primary {
+    width: 100%; padding: 14px; border: none; border-radius: 10px; background: var(--accent);
+    color: #fff; font-size: 1rem; font-weight: 600; cursor: pointer;
+  }
+  button.primary:disabled { opacity: 0.5; cursor: default; }
+  button.link {
+    background: none; border: none; color: var(--muted); font-size: 0.85rem;
+    padding: 8px 0; cursor: pointer; text-decoration: underline;
+  }
+  .summary-row { display: flex; justify-content: space-between; padding: 6px 0; font-size: 0.92rem; }
+  .summary-row .k { color: var(--muted); }
+  .msg { padding: 12px 14px; border-radius: 10px; font-size: 0.9rem; margin-bottom: 12px; }
+  .msg.error { background: #fdecea; color: var(--danger); }
+  .msg.ok { background: #eaf6ea; color: var(--ok); }
+  .center { text-align: center; }
+  .spinner {
+    width: 28px; height: 28px; border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; margin: 12px auto; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { color: var(--muted); text-align: center; padding: 20px 0; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="businessName">Book an appointment</h1>
+  <p id="businessType"></p>
+</header>
+<main>
+  <div class="steps" id="stepsDots"></div>
+  <div id="app"></div>
+</main>
+
+<script>
+/* ====================== CONFIGURE THIS ====================== */
+const API_BASE_URL = 'https://script.google.com/macros/s/AKfycbwM7NZwgu7FAPTvMpY5JBrNHUeY9RU9Pr2_R0EjarKyQ1WfsNqKd3FW9idx4598lpJH/exec';
+/* =============================================================== */
+
+const STEP_NAMES = ['service', 'provider', 'time', 'details', 'confirm'];
+const state = {
+  step: 0,
+  services: [], providers: [],
+  service: null, provider: null, // provider === null means "any available"
+  date: todayIso(), time: null,
+  phone: '', name: '', returningClient: false,
+  booking: null, payment: null,
+};
+
+function todayIso() {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+async function api(action, params, method) {
+  if (API_BASE_URL.indexOf('PASTE_YOUR') === 0) {
+    throw new Error('API_BASE_URL is not configured yet — see docs/SETUP.md step 4.');
+  }
+  let url = API_BASE_URL;
+  let opts = {};
+  if (method === 'POST') {
+    opts = {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // avoids CORS preflight, see Code.gs
+      body: JSON.stringify(Object.assign({ action }, params)),
+    };
+  } else {
+    const qs = new URLSearchParams(Object.assign({ action }, params)).toString();
+    url = API_BASE_URL + '?' + qs;
+  }
+  const resp = await fetch(url, opts);
+  const body = await resp.json();
+  if (!body.ok) throw new Error(body.error || 'Request failed');
+  return body;
+}
+
+function render() {
+  renderDots();
+  const el = document.getElementById('app');
+  el.innerHTML = '';
+  const renderers = [renderServiceStep, renderProviderStep, renderTimeStep, renderDetailsStep, renderConfirmStep];
+  renderers[state.step](el);
+}
+
+function renderDots() {
+  const dots = document.getElementById('stepsDots');
+  dots.innerHTML = STEP_NAMES.map((_, i) =>
+    `<div class="dot ${i === state.step ? 'active' : i < state.step ? 'done' : ''}"></div>`
+  ).join('');
+}
+
+function card(html) {
+  const div = document.createElement('div');
+  div.className = 'card';
+  div.innerHTML = html;
+  return div;
+}
+
+// ---- Step 0: service ----
+async function renderServiceStep(el) {
+  el.appendChild(card('<h2>Choose a service</h2><div class="spinner"></div>'));
+  try {
+    if (!state.services.length) {
+      const res = await api('listServices', {}, 'GET');
+      state.services = res.services;
+    }
+    const c = card('<h2>Choose a service</h2><div class="option-list" id="svcList"></div>');
+    el.innerHTML = '';
+    el.appendChild(c);
+    const list = c.querySelector('#svcList');
+    if (!state.services.length) {
+      list.innerHTML = '<div class="empty">No services are available right now.</div>';
+      return;
+    }
+    state.services.forEach((s) => {
+      const btn = document.createElement('button');
+      btn.className = 'option' + (state.service && state.service.service_id === s.service_id ? ' selected' : '');
+      btn.innerHTML = `<span><span class="name">${escapeHtml(s.name)}</span><br>
+        <span class="meta">${s.duration_minutes} min · ${s.payment_timing === 'at_booking' ? 'deposit at booking' : 'pay after service'}</span></span>
+        <span class="price">KES ${s.price}</span>`;
+      btn.onclick = () => { state.service = s; state.provider = null; state.time = null; goTo(1); };
+      list.appendChild(btn);
+    });
+  } catch (e) {
+    el.innerHTML = '';
+    el.appendChild(card(`<div class="msg error">${escapeHtml(e.message)}</div>`));
+  }
+}
+
+// ---- Step 1: provider ----
+async function renderProviderStep(el) {
+  el.appendChild(card('<h2>Choose a stylist / provider</h2><div class="spinner"></div>'));
+  try {
+    if (!state.providers.length) {
+      const res = await api('listProviders', {}, 'GET');
+      state.providers = res.providers;
+    }
+    el.innerHTML = '';
+    const c = card('<h2>Choose a provider</h2><div class="option-list" id="provList"></div>');
+    el.appendChild(c);
+    const list = c.querySelector('#provList');
+
+    const anyBtn = document.createElement('button');
+    anyBtn.className = 'option' + (state.provider === null ? ' selected' : '');
+    anyBtn.innerHTML = `<span class="name">Any available</span>`;
+    anyBtn.onclick = () => { state.provider = null; state.time = null; goTo(2); };
+    list.appendChild(anyBtn);
+
+    state.providers.forEach((p) => {
+      const btn = document.createElement('button');
+      btn.className = 'option' + (state.provider && state.provider.provider_id === p.provider_id ? ' selected' : '');
+      btn.innerHTML = `<span class="name">${escapeHtml(p.name)}</span>`;
+      btn.onclick = () => { state.provider = p; state.time = null; goTo(2); };
+      list.appendChild(btn);
+    });
+    el.appendChild(backLink(0));
+  } catch (e) {
+    el.innerHTML = '';
+    el.appendChild(card(`<div class="msg error">${escapeHtml(e.message)}</div>`));
+  }
+}
+
+// ---- Step 2: date + time ----
+async function renderTimeStep(el) {
+  const c = card(`
+    <h2>Pick a date and time</h2>
+    <label for="dateInput">Date</label>
+    <input type="date" id="dateInput" value="${state.date}" min="${todayIso()}">
+    <div id="slotArea"><div class="spinner"></div></div>
+  `);
+  el.appendChild(c);
+  el.appendChild(backLink(1));
+  c.querySelector('#dateInput').onchange = (e) => { state.date = e.target.value; state.time = null; loadSlots(c); };
+  await loadSlots(c);
+}
+
+async function loadSlots(c) {
+  const area = c.querySelector('#slotArea');
+  area.innerHTML = '<div class="spinner"></div>';
+  try {
+    const params = { date: state.date, service_id: state.service.service_id };
+    if (state.provider) params.provider_id = state.provider.provider_id;
+    const res = await api('getAvailability', params, 'GET');
+    if (!res.slots.length) {
+      area.innerHTML = '<div class="empty">No open slots that day — try another date.</div>';
+      return;
+    }
+    area.innerHTML = '<div class="slot-grid"></div>';
+    const grid = area.querySelector('.slot-grid');
+    res.slots.forEach((s) => {
+      const btn = document.createElement('button');
+      btn.className = 'slot' + (state.time === s.time ? ' selected' : '');
+      btn.textContent = s.time;
+      btn.onclick = () => {
+        state.time = s.time;
+        if (!state.provider) state.assignedProviderName = s.providers[0].name; // "any available" resolves to whoever's free
+        goTo(3);
+      };
+      grid.appendChild(btn);
+    });
+  } catch (e) {
+    area.innerHTML = `<div class="msg error">${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ---- Step 3: phone + name ----
+function renderDetailsStep(el) {
+  const c = card(`
+    <h2>Your details</h2>
+    <label for="phoneInput">Phone number (M-Pesa)</label>
+    <input type="tel" id="phoneInput" placeholder="07XX XXX XXX" value="${escapeHtml(state.phone)}">
+    <div id="nameArea"></div>
+    <div id="detailsMsg"></div>
+    <button class="primary" id="detailsNext">Continue</button>
+  `);
+  el.appendChild(c);
+  el.appendChild(backLink(2));
+
+  const nameArea = c.querySelector('#nameArea');
+  function renderNameField() {
+    if (state.returningClient) {
+      nameArea.innerHTML = `<div class="msg ok">Welcome back, ${escapeHtml(state.name)}!</div>`;
+    } else {
+      nameArea.innerHTML = `<label for="nameInput">Your name</label>
+        <input type="text" id="nameInput" placeholder="Full name" value="${escapeHtml(state.name)}">`;
+    }
+  }
+  renderNameField();
+
+  let debounce;
+  c.querySelector('#phoneInput').addEventListener('input', (e) => {
+    state.phone = e.target.value;
+    state.returningClient = false;
+    clearTimeout(debounce);
+    debounce = setTimeout(async () => {
+      if (state.phone.replace(/\D/g, '').length < 9) return;
+      try {
+        const res = await api('checkReturningClient', { phone: state.phone }, 'GET');
+        if (res.exists) { state.name = res.name; state.returningClient = true; renderNameField(); }
+      } catch (_) { /* not a valid number yet — ignore */ }
+    }, 500);
+  });
+
+  c.querySelector('#detailsNext').onclick = () => {
+    const nameInput = c.querySelector('#nameInput');
+    if (nameInput) state.name = nameInput.value.trim();
+    const msg = c.querySelector('#detailsMsg');
+    if (!state.phone.trim()) { msg.innerHTML = '<div class="msg error">Phone number is required.</div>'; return; }
+    if (!state.returningClient && !state.name) { msg.innerHTML = '<div class="msg error">Please enter your name.</div>'; return; }
+    goTo(4);
+  };
+}
+
+// ---- Step 4: confirm + book ----
+function renderConfirmStep(el) {
+  const providerLabel = state.provider ? state.provider.name : (state.assignedProviderName || 'Any available');
+  const c = card(`
+    <h2>Confirm your booking</h2>
+    <div class="summary-row"><span class="k">Service</span><span>${escapeHtml(state.service.name)}</span></div>
+    <div class="summary-row"><span class="k">Provider</span><span>${escapeHtml(providerLabel)}</span></div>
+    <div class="summary-row"><span class="k">When</span><span>${state.date} at ${state.time}</span></div>
+    <div class="summary-row"><span class="k">Price</span><span>KES ${state.service.price}</span></div>
+    <div class="summary-row"><span class="k">Payment</span><span>${state.service.payment_timing === 'at_booking' ? 'Deposit now via M-Pesa' : 'Pay after your visit'}</span></div>
+    <div id="confirmMsg"></div>
+    <button class="primary" id="confirmBtn">Confirm booking</button>
+  `);
+  el.appendChild(c);
+  el.appendChild(backLink(3));
+
+  c.querySelector('#confirmBtn').onclick = async () => {
+    const btn = c.querySelector('#confirmBtn');
+    const msg = c.querySelector('#confirmMsg');
+    btn.disabled = true;
+    msg.innerHTML = '<div class="spinner"></div>';
+    try {
+      const res = await api('createBooking', {
+        service_id: state.service.service_id,
+        provider_id: state.provider ? state.provider.provider_id : 'any',
+        date: state.date, time: state.time,
+        client_phone: state.phone, client_name: state.name,
+      }, 'POST');
+      state.booking = res.booking;
+      state.payment = res.payment;
+      renderDone(el);
+    } catch (e) {
+      msg.innerHTML = `<div class="msg error">${escapeHtml(e.message)}</div>`;
+      btn.disabled = false;
+    }
+  };
+}
+
+function renderDone(el) {
+  el.innerHTML = '';
+  if (state.service.payment_timing === 'at_booking' && state.payment && state.payment.status === 'sent') {
+    el.appendChild(card(`
+      <h2>Booking confirmed ✅</h2>
+      <div class="msg ok">An M-Pesa prompt has been sent to ${escapeHtml(state.phone)}. Enter your M-Pesa PIN on your
+      phone to secure your slot.</div>
+      <div id="pollArea" class="center"><div class="spinner"></div><p class="empty">Waiting for payment confirmation…</p></div>
+    `));
+    pollPaymentStatus(el);
+  } else if (state.service.payment_timing === 'at_booking') {
+    el.appendChild(card(`
+      <h2>Booking confirmed ✅</h2>
+      <div class="msg error">We couldn't reach M-Pesa automatically. Please pay the deposit in person or ask us to
+      resend the prompt when you arrive.</div>
+    `));
+  } else {
+    el.appendChild(card(`
+      <h2>Booking confirmed ✅</h2>
+      <p>See you on ${state.date} at ${state.time}. Payment is collected after your visit.</p>
+    `));
+  }
+  const restart = document.createElement('button');
+  restart.className = 'link';
+  restart.textContent = 'Make another booking';
+  restart.onclick = () => location.reload();
+  el.appendChild(restart);
+}
+
+async function pollPaymentStatus(el) {
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      const res = await api('getBookingStatus', { booking_id: state.booking.booking_id }, 'GET');
+      const area = document.getElementById('pollArea');
+      if (!area) return;
+      if (res.payment_status === 'paid') {
+        area.innerHTML = '<div class="msg ok">Payment received. See you soon!</div>';
+        return;
+      }
+    } catch (_) { /* keep polling */ }
+  }
+  const area = document.getElementById('pollArea');
+  if (area) area.innerHTML = '<p class="empty">Still waiting — if you already paid, you\'re all set.</p>';
+}
+
+function backLink(toStep) {
+  const btn = document.createElement('button');
+  btn.className = 'link';
+  btn.textContent = '← Back';
+  btn.onclick = () => goTo(toStep);
+  return btn;
+}
+
+function goTo(step) { state.step = step; render(); }
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+const BUSINESS_TYPE_SUBTITLE = {
+  salon: 'Book your next salon visit', spa: 'Book your spa appointment',
+  'nail bar': 'Book your nail appointment', barbershop: 'Book your barbershop slot',
+};
+
+async function applyBranding() {
+  try {
+    const res = await api('getPublicSettings', {}, 'GET');
+    document.title = res.business_name ? res.business_name + ' — Book' : document.title;
+    document.getElementById('businessName').textContent = res.business_name || 'Book an appointment';
+    document.getElementById('businessType').textContent =
+      BUSINESS_TYPE_SUBTITLE[res.business_type] || 'Book your appointment';
+    if (res.branding_accent_color) document.documentElement.style.setProperty('--accent', res.branding_accent_color);
+    if (res.branding_logo_url) {
+      const img = document.createElement('img');
+      img.src = res.branding_logo_url;
+      img.alt = res.business_name || 'Logo';
+      document.querySelector('header').prepend(img);
+    }
+  } catch (e) {
+    // API not configured yet, or offline — fall back to the generic header already in the HTML.
+  }
+}
+
+applyBranding();
+render();
+</script>
+</body>
+</html>
